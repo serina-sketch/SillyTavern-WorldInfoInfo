@@ -5,7 +5,7 @@ import { promptManager } from '../../../openai.js';
 import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
 import { delay } from '../../../utils.js';
-import { world_info_position } from '../../../world-info.js';
+import { parseRegexFromString, world_info_case_sensitive, world_info_depth, world_info_include_names, world_info_match_whole_words, world_info_position } from '../../../world-info.js';
 import { isAdmin, getCurrentUserHandle } from '../../../user.js';
 import { Popup, POPUP_TYPE } from '../../../popup.js';
 
@@ -61,6 +61,49 @@ const getStrategy = (entry)=>{
         return 'normal';
     }
 };
+
+// Which word fired an entry. SillyTavern only logs the key, and a regex key (one per entry when
+// a lorebook is built by lore.py) logs as the whole regex, so run the keys again on what was
+// scanned: the last messages (scan depth), then the text of the other active entries (recursion).
+const escapeRegex = (s)=>s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const keyRegex = (key, entry)=>{
+    const rx = parseRegexFromString(key);
+    if (rx) return new RegExp(rx.source, rx.flags.replace('g', ''));
+    const cs = entry.caseSensitive ?? world_info_case_sensitive;
+    const whole = entry.matchWholeWords ?? world_info_match_whole_words;
+    const k = escapeRegex(key.trim());
+    return new RegExp(whole ? `(?<![\\p{L}\\p{N}_])${k}(?![\\p{L}\\p{N}_])` : k, cs ? 'u' : 'iu');
+};
+const snippetAround = (text, index, length, pad = 30)=>{
+    const start = Math.max(0, index - pad), end = Math.min(text.length, index + length + pad);
+    return (start > 0 ? '…' : '') + text.slice(start, end).replace(/\s+/g, ' ').trim() + (end < text.length ? '…' : '');
+};
+const findMatch = (entry, sources)=>{
+    for (const key of entry.key ?? []) {
+        if (!key?.trim()) continue;
+        let rx;
+        try { rx = keyRegex(key, entry); } catch { continue; }
+        for (const src of sources) {
+            const m = rx.exec(src.text);
+            if (m) return { word: m[0], snippet: snippetAround(src.text, m.index, m[0].length), via: src.via };
+        }
+    }
+    return null;
+};
+const findTrigger = (entry, activeEntries)=>{
+    if (entry.constant === true) return null;
+    const depth = Number.isFinite(entry.scanDepth) ? entry.scanDepth : world_info_depth;
+    const messages = chat.filter(m=>!m.is_system).slice(-depth).reverse()
+        .map(m=>({ text: world_info_include_names ? `${m.name}: ${m.mes}` : m.mes, via: null }));
+    const fromChat = entry.delayUntilRecursion ? null : findMatch(entry, messages);
+    if (fromChat) return fromChat;
+    if (entry.excludeRecursion) return null;
+    const others = activeEntries
+        .filter(o=>o !== entry && !o.preventRecursion && o.content)
+        .map(o=>({ text: o.content, via: o.comment?.length ? o.comment : o.key.join(', ') }));
+    return findMatch(entry, others);
+};
+const triggerText = (t)=>t ? `"${t.word}"${t.via ? ` in ${t.via}` : ''}` : null;
 
 let generationType;
 eventSource.on(event_types.GENERATION_STARTED, (genType)=>generationType = genType);
@@ -463,6 +506,9 @@ const init = ()=>{
             )));
         }
 
+        for (const entry of filtered) entry.stwiiTrigger = findTrigger(entry, filtered);
+        STWII.lastActive = filtered;
+
         currentEntryList = [...filtered];
 
         if (filtered.length === 0) {
@@ -678,7 +724,17 @@ const init = ()=>{
                             title.classList.add('stwii--title');
                             if (entry.type == 'wi') {
                                 title.textContent = entry.comment?.length ? entry.comment : entry.key.join(', ');
-                                e.title += `[${entry.world}] ${entry.comment?.length ? entry.comment : entry.key.join(', ')}\n---\n${entry.content}`;
+                                const t = entry.stwiiTrigger;
+                                if (t) {
+                                    const matched = document.createElement('div'); {
+                                        matched.classList.add('stwii--matched');
+                                        matched.textContent = `🔑 ${triggerText(t)}`;
+                                        title.append(matched);
+                                    }
+                                }
+                                e.title += `[${entry.world}] ${entry.comment?.length ? entry.comment : entry.key.join(', ')}\n`
+                                    + (t ? `Fired by ${triggerText(t)}: ${t.snippet}\n` : '')
+                                    + `---\n${entry.content}`;
                             } else if (entry.type == 'mes') {
                                 const first = document.createElement('div'); {
                                     first.classList.add('stwii--first');
@@ -1422,7 +1478,11 @@ window.STWII.destroy = function() {
                 for (const ev of events) {
                     const entryIdent = fmtEntry(ev);
                     const ov = overrideById.get(`${ev.world}:${ev.uid}`) || parseFromLogsByUid(logLines, ev.uid, ev.world) || null;
-                    const primaryUse = ov && ov.primary ? ov.primary : (ev.primary || null);
+                    let primaryUse = ov && ov.primary ? ov.primary : (ev.primary || null);
+                    if (primaryUse && parseRegexFromString(primaryUse)) {
+                        const active = (STWII.lastActive ?? []).find(it=>it.world === ev.world && String(it.uid) === String(ev.uid));
+                        primaryUse = active?.stwiiTrigger ? `"${active.stwiiTrigger.word.toLowerCase()}"` : 'regex key';
+                    }
                     const secondaryUse = ov && Array.isArray(ov.secondary) ? ov.secondary : (Array.isArray(ev.secondary) ? ev.secondary : []);
                     const kws = isForceActivatedEvent(ev, primaryUse, secondaryUse)
                         ? [FORCE_ACTIVATED_KEYWORD]
@@ -1619,7 +1679,12 @@ window.STWII.destroy = function() {
                         };
                         const op = ov2 && ov2.logic ? logicMap[ov2.logic] ?? null : (ev && ev.logic ? logicMap[ev.logic] ?? null : null);
 
-                        const prim = primaryKw;
+                        // A regex key logs as the whole regex: show the word it matched instead
+                        let prim = primaryKw;
+                        if (prim && parseRegexFromString(prim)) {
+                            const active = (STWII.lastActive ?? []).find(it=>it.world === ev.world && String(it.uid) === String(ev.uid));
+                            prim = triggerText(active?.stwiiTrigger) ?? 'regex key';
+                        }
                         // Deduplicate if primary also appears among secondaries (case-insensitive)
                         const uniqSecFiltered = prim ? uniqSec.filter(s => String(s).toLowerCase() !== String(prim).toLowerCase()) : uniqSec;
 
