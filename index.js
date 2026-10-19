@@ -103,7 +103,7 @@ const findTrigger = (entry, activeEntries)=>{
         .map(o=>({ text: o.content, via: o.comment?.length ? o.comment : o.key.join(', ') }));
     return findMatch(entry, others);
 };
-const triggerText = (t)=>t ? `"${t.word}"${t.via ? ` in ${t.via}` : ''}` : null;
+const triggerText = (t)=>t ? (t.via ? `from ${t.via}: "${t.word}"` : `"${t.word}"`) : null;
 
 let generationType;
 eventSource.on(event_types.GENERATION_STARTED, (genType)=>generationType = genType);
