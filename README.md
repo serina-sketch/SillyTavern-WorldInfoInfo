@@ -1,6 +1,6 @@
 # SillyTavern - WorldInfo Info
 
-**This fork (serina-sketch):** shows which word fired each entry. SillyTavern only logs the key, and a regex key logs as the whole regex, so the extension runs each active entry's keys again on what was scanned (the last messages, by scan depth, then the other active entries' text for recursion). The panel shows a 🔑 line under each entry (`"shock"`, or `from The pink room: "room"` when another entry's text pulled it in), the tooltip adds the text around the word, and `/wi-report` shows the word instead of the regex. Upstream: aikohanasaki/SillyTavern-WorldInfoInfo.
+**This fork (serina-sketch):** shows which word fired each entry. SillyTavern only logs the key, and a regex key logs as the whole regex, so the extension runs each active entry's keys again on what was scanned (the last messages, by scan depth, then the other active entries' text for recursion). The panel shows a 🔑 line under each entry (`"shock"`, or `from The pink room: "room"` when another entry's text pulled it in), the tooltip adds the text around the word, and `/wi-report` shows the word instead of the regex. A **📋 Copy list** button at the top of the panel copies the active entries as plain text, grouped by lorebook, each with the word that fired it (or "always on"). Upstream: aikohanasaki/SillyTavern-WorldInfoInfo.
 
 Forked from the amazing LenAnderson. Original at https://github.com/LenAnderson/SillyTavern-WorldInfoInfo; this version adds the following features:
 

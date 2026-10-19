@@ -4,7 +4,7 @@ import { extension_settings } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
 import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
-import { delay } from '../../../utils.js';
+import { copyText, delay } from '../../../utils.js';
 import { parseRegexFromString, world_info_case_sensitive, world_info_depth, world_info_include_names, world_info_match_whole_words, world_info_position } from '../../../world-info.js';
 import { isAdmin, getCurrentUserHandle } from '../../../user.js';
 import { Popup, POPUP_TYPE } from '../../../popup.js';
@@ -559,6 +559,27 @@ const init = ()=>{
             // Keep other 9Z hidden for non-admins
             return s.startsWith('9Z');
         };
+        // One click copies the active entries, each with the word that fired it, as plain text
+        const wiEntries = entryList.filter(it=>it.type == 'wi' && (adminBypass || !isHiddenWorld(it.world)));
+        if (wiEntries.length) {
+            const copy = document.createElement('div'); {
+                copy.classList.add('stwii--copy', 'menu_button');
+                copy.textContent = '📋 Copy list';
+                copy.title = 'Copy the active entries and what fired each one';
+                copy.addEventListener('click', (evt)=>{
+                    evt.stopPropagation();
+                    const byWorld = Object.groupBy(wiEntries, it=>it.world);
+                    const text = Object.entries(byWorld).map(([world, list])=>`${world}\n` + list.map(it=>{
+                        const name = it.comment?.length ? it.comment : it.key.join(', ');
+                        const why = it.constant ? 'always on' : (triggerText(it.stwiiTrigger) ?? 'no word found');
+                        return `- ${name}: ${why}`;
+                    }).join('\n')).join('\n\n');
+                    copyText(text);
+                    toastr.success('Active entries copied');
+                });
+                panel.append(copy);
+            }
+        }
         let grouped;
         if (isGrouped) {
             grouped = Object.groupBy(entryList, (it,idx)=>it.world);

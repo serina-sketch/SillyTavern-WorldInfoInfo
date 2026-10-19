@@ -282,3 +282,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.stwii--panel .stwii--copy {
+  align-self: flex-end;
+  font-size: 0.85em;
+  padding: 2px 8px;
+  margin: 0 0 0.5em;
+  width: fit-content;
+}
